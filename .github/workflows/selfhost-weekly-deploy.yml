@@ -1,0 +1,71 @@
+name: Weekly self-host deploy
+
+# Merges every-app/open-seo main into this fork's main, then deploys the
+# selfhost Cloudflare stage (pnpm deploy:selfhost). Fork-only — never run
+# with production secrets on other repositories.
+#
+# Required repo secrets:
+#   CLOUDFLARE_API_TOKEN — Workers Scripts/KV/D1/R2/Workflows write, Secrets
+#     Store read, Account Settings read (same as PR preview deploys).
+#   CLOUDFLARE_ACCOUNT_ID
+#   ENV_SELFHOST — full contents of .env.selfhost (DATAFORSEO_API_KEY,
+#     ACCESS_ALLOWED_EMAILS, optional GSC / analytics keys, etc.)
+
+on:
+  schedule:
+    # Monday 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: selfhost-weekly-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  sync-and-deploy:
+    if: github.repository == 'Bartek532/open-seo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/every-app/open-seo.git
+          git fetch upstream main
+          git merge --no-edit upstream/main
+          git push origin main
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Write .env.selfhost
+        run: printf '%s' "$ENV_SELFHOST" > .env.selfhost
+        env:
+          ENV_SELFHOST: ${{ secrets.ENV_SELFHOST }}
+
+      - name: Deploy selfhost stage
+        run: pnpm deploy:selfhost --yes
